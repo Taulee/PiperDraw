@@ -1,11 +1,9 @@
 """简笔画中心线：保护短五官与闭环，只修剪附着毛刺并局部平滑。"""
 
-from itertools import pairwise
-
 import cv2
 import numpy as np
 
-from .curves import _corner_indices, _has_intersection, _smooth_span
+from .curves import smooth_path
 from .marks import extract_marks, mark_support_mask
 from .stroke_graph import _neighbors, trace, trace_strokes
 
@@ -69,44 +67,9 @@ def prune_spurs(skeleton, pixel_size_mm, spur_length_mm):
     return result
 
 
-def smooth_supported_path(points, closed, tolerance_mm, span_mm, supported):
-    """以毫米窗口平滑，误差有界；支撑失败只拆分并回退所在窗口。
-
-    supported 必须校验完整折线是否留在黑线内。端点、尖角和窗口接点固定，
-    每个候选沿用现有参数折线误差界；最终全路径检查阻止新增自交。
-    """
-    points = np.asarray(points, dtype=float)
-    if len(points) < 3 or tolerance_mm == 0 or _has_intersection(points, closed):
-        return points.copy()
-    corners, _ = _corner_indices(points, tolerance_mm, closed)
-    lengths = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))]
-    anchors = {0, len(points) - 1, *corners}
-    for start, end in pairwise(sorted(anchors)):
-        current = start
-        while lengths[end] - lengths[current] > span_mm:
-            following = max(
-                current + 1, min(int(np.searchsorted(lengths, lengths[current] + span_mm)), end)
-            )
-            anchors.add(following)
-            current = following
-
-    def smooth_span(first, last):
-        source = points[first : last + 1]
-        candidate = _smooth_span(source, tolerance_mm)
-        if supported(candidate):
-            return candidate
-        if last - first <= 2:
-            return source
-        middle = int(np.searchsorted(lengths, (lengths[first] + lengths[last]) / 2))
-        middle = max(first + 1, min(middle, last - 1))
-        left, right = smooth_span(first, middle), smooth_span(middle, last)
-        return np.vstack((left, right[1:]))
-
-    spans = [smooth_span(first, last) for first, last in pairwise(sorted(anchors))]
-    result = np.vstack([spans[0], *[span[1:] for span in spans[1:]]])
-    if (closed and len(result) < 4) or _has_intersection(result, closed):
-        return points.copy()
-    return result
+def smooth_supported_path(points, closed, tolerance_mm, span_mm, supported, **kwargs):
+    """兼容旧调用入口；span_mm 已废弃，连续段不再按固定窗口切断。"""
+    return smooth_path(points, closed, tolerance_mm, supported=supported, **kwargs)
 
 
 def _dot_paths(mask, skeleton, pixel_size_mm, pen_width_mm):
@@ -213,7 +176,7 @@ def _guard_block_highlights(mask, pixel_size_mm, pen_width_mm):
     return result
 
 
-def simple_paths(mask, pixel_size_mm, offset, options):
+def simple_paths(mask, pixel_size_mm, offset, options, *, diagnostics=None):
     """输入 uint8 黑线掩码及纸面变换；返回毫米路径和修剪后的像素骨架。
 
     普通线只走中心线；紧凑厚黑点保留外轮廓及至多一条中心短笔，避免
@@ -247,22 +210,48 @@ def simple_paths(mask, pixel_size_mm, offset, options):
         options.get("join_angle_deg", 35.0),
         options.get("direction_lookahead_mm", 0.8),
         options.get("junction_span_mm", 0.5),
+        with_anchors=True,
     )
     height = mask.shape[0]
     paths = []
-    for pixels, closed, _ in chains:
+    originals = []
+    for stroke_index, (pixels, closed, _, anchors) in enumerate(chains):
         points = np.column_stack((pixels[:, 1], height - 1 - pixels[:, 0])) * pixel_size_mm + offset
+        records = []
         candidate = smooth_supported_path(
             points,
             closed,
             options["simplify_mm"],
             span_mm,
             lambda candidate: _supported_path(candidate, support, pixel_size_mm, offset),
+            fixed_points=points[anchors],
+            max_step_mm=options["step_mm"],
+            chord_error_mm=options.get("curve_chord_error_mm", 0.03),
+            diagnostics=records,
         )
+        if diagnostics is not None:
+            diagnostics.extend(dict(record, stroke=stroke_index) for record in records)
+        originals.append((points, closed))
         paths.append((candidate, closed))
     for pixels, closed in marks + _dot_paths(
         line_mask, original_skeleton, pixel_size_mm, pen_width_mm
     ):
         points = np.column_stack((pixels[:, 1], height - 1 - pixels[:, 0])) * pixel_size_mm + offset
+        if diagnostics is not None:
+            diagnostics.append(
+                {
+                    "stroke": len(paths),
+                    "method": "preserved",
+                    "reason": "mark_geometry",
+                    "source_length_mm": float(
+                        np.linalg.norm(np.diff(points, axis=0), axis=1).sum()
+                    ),
+                    "start_xy_mm": points[0].tolist(),
+                    "end_xy_mm": points[-1].tolist(),
+                }
+            )
+        originals.append((points, closed))
         paths.append((points, closed))
-    return paths, skeleton
+    from .curves import protect_connections
+
+    return protect_connections(paths, originals, diagnostics), skeleton

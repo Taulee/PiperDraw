@@ -22,9 +22,7 @@ def config():
     values = yaml.safe_load((Path(__file__).parents[1] / "config/sim.yaml").read_text())
     values["paper"].update(width_mm=40.0, height_mm=40.0, margin_mm=0.0)
     # 保留白色高光作为基准；测试填孔行为时再显式开启。
-    values["image"].update(
-        mode="simple", spur_length_mm=0.8, smoothing_span_mm=4.0, small_hole_area_mm2=0
-    )
+    values["image"].update(mode="simple", spur_length_mm=0.8, small_hole_area_mm2=0)
     return values
 
 
@@ -151,7 +149,12 @@ def test_attached_thick_pupil_stays_visible_and_eyelid_is_not_double_traced(tmp_
         for stroke in strokes
     )
     for x in (8.0, 32.0):
-        nearby = [point for stroke in strokes for point in stroke.points if abs(point[0] - x) < 0.3]
+        nearby = [
+            point
+            for stroke in strokes
+            for point in resample(stroke.points, 0.05)
+            if abs(point[0] - x) < 0.3
+        ]
         assert nearby
         assert np.ptp(np.asarray(nearby)[:, 1]) < 0.5
 
@@ -331,10 +334,10 @@ def test_local_smoothing_does_not_add_intersection_in_nearby_fold():
     assert np.array_equal(result[[0, -1]], points[[0, -1]])
 
 
-def test_small_positive_window_still_advances_at_large_arc_lengths():
+def test_deprecated_window_does_not_force_extra_anchors():
     points = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
     result = smooth_supported_path(points, False, 0.2, np.finfo(float).eps, lambda _: True)
-    assert np.array_equal(result, points)
+    assert np.array_equal(result, points[[0, -1]])
 
 
 @pytest.mark.parametrize(

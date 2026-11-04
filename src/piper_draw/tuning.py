@@ -18,7 +18,8 @@ from .vectorize import NoDrawableLinesError, image_frame, read_mask, vectorize
 TUNABLE_OPTIONS = {
     "mode",
     "spur_length_mm",
-    "smoothing_span_mm",
+    "curve_chord_error_mm",
+    "smoothing_span_mm",  # 仅用于旧调参文件迁移，vectorize 会提示废弃。
     "small_hole_area_mm2",
     "max_pixels",
     "min_component_pixels",
@@ -101,8 +102,8 @@ def load_tuning_config(path):
                 raise ValueError(f"{name}.order_passes 不能大于 2")
             if option == "join_angle_deg" and value > 90:
                 raise ValueError(f"{name}.join_angle_deg 不能大于 90")
-            if option == "smoothing_span_mm" and value == 0:
-                raise ValueError(f"{name}.smoothing_span_mm 必须大于 0")
+            if option in {"smoothing_span_mm", "curve_chord_error_mm"} and value == 0:
+                raise ValueError(f"{name}.{option} 必须大于 0")
     return settings
 
 

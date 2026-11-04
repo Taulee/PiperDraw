@@ -1,10 +1,11 @@
+import warnings
 from dataclasses import dataclass
 from itertools import pairwise
 
 import cv2
 import numpy as np
 
-from .curves import smooth_path
+from .curves import protect_connections, smooth_path
 from .geometry import drawing_bounds, resample
 from .marks import extract_marks, mark_support_mask
 from .stroke_graph import trace, trace_strokes
@@ -163,8 +164,14 @@ def image_frame(shape, paper):
     return factor, offset
 
 
-def vectorize(path, config):
+def vectorize(path, config, *, diagnostics=None):
     options = config["image"]
+    if "smoothing_span_mm" in options:
+        warnings.warn(
+            "image.smoothing_span_mm 已废弃：连续样条不再按固定窗口分段；请从配置中移除此字段",
+            UserWarning,
+            stacklevel=2,
+        )
     if options.get("mode", "faithful") not in ("faithful", "simple"):
         raise ValueError("image.mode 必须是 faithful 或 simple")
     pen_width = options.get("pen_width_mm", 0.5)
@@ -174,6 +181,7 @@ def vectorize(path, config):
         ("step_mm", options["step_mm"], np.finfo(float).eps),
         ("pen_width_mm", pen_width, np.finfo(float).eps),
         ("simplify_mm", options["simplify_mm"], 0),
+        ("curve_chord_error_mm", options.get("curve_chord_error_mm", 0.03), np.finfo(float).eps),
         ("min_stroke_mm", options["min_stroke_mm"], 0),
         ("join_angle_deg", options.get("join_angle_deg", 35.0), 0),
         ("direction_lookahead_mm", options.get("direction_lookahead_mm", 0.8), 0),
@@ -196,7 +204,7 @@ def vectorize(path, config):
     if options.get("mode") == "simple":
         from .simple_lines import simple_paths
 
-        paths, skeleton = simple_paths(mask, factor, offset, options)
+        paths, skeleton = simple_paths(mask, factor, offset, options, diagnostics=diagnostics)
         strokes = [Stroke(resample(points, options["step_mm"]), closed) for points, closed in paths]
         if not strokes:
             raise NoDrawableLinesError("图像中没有可绘制的线条")
@@ -210,21 +218,40 @@ def vectorize(path, config):
         options.get("join_angle_deg", 35.0),
         options.get("direction_lookahead_mm", 0.8),
         options.get("junction_span_mm", 0.5),
+        with_anchors=True,
     )
     # 黑块中的短笔和小闭环承载细节，不能再按普通笔画长度过滤。
     mark_mask = mark_support_mask(mask, factor, pen_width)
-    paths = [(pixels, closed, mask) for pixels, closed, _ in chains] + [
-        (pixels, closed, mark_mask) for pixels, closed in marks
+    paths = [(pixels, closed, mask, anchors) for pixels, closed, _, anchors in chains] + [
+        (pixels, closed, mark_mask, np.array([], dtype=int)) for pixels, closed in marks
     ]
-    strokes = []
-    for pixels, closed, support_mask in paths:
+    candidates, originals = [], []
+    for pixels, closed, support_mask, anchors in paths:
+        stroke_index = len(originals)
         points = np.column_stack((pixels[:, 1], height - 1 - pixels[:, 0])) * factor + offset
         if len(points) < 2:
             continue
-        candidate = smooth_path(points, closed, options["simplify_mm"])
-        if _supported_path(candidate, support_mask, factor, offset):
-            points = candidate
-        strokes.append(Stroke(resample(points, options["step_mm"]), closed))
+        records = []
+        candidate = smooth_path(
+            points,
+            closed,
+            options["simplify_mm"],
+            supported=lambda path, support=support_mask: _supported_path(
+                path, support, factor, offset
+            ),
+            fixed_points=points[anchors],
+            max_step_mm=options["step_mm"],
+            chord_error_mm=options.get("curve_chord_error_mm", 0.03),
+            diagnostics=records,
+        )
+        if diagnostics is not None:
+            diagnostics.extend(dict(record, stroke=stroke_index) for record in records)
+        originals.append((points, closed))
+        candidates.append((candidate, closed))
+    strokes = [
+        Stroke(resample(points, options["step_mm"]), closed)
+        for points, closed in protect_connections(candidates, originals, diagnostics)
+    ]
     if not strokes:
         raise NoDrawableLinesError("图像中没有可绘制的线条")
     return order_strokes(strokes, passes), skeleton

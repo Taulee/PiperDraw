@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import cv2
@@ -21,8 +22,10 @@ def has_legacy_job_calibration(path, job):
     return (
         isinstance(snapshot, dict)
         and snapshot.get("calibrated") is False
-        and all(key in job and snapshot.get(key) == job[key]
-                for key in ("calibration_id", "robot", "tool", "motion"))
+        and all(
+            key in job and snapshot.get(key) == job[key]
+            for key in ("calibration_id", "robot", "tool", "motion")
+        )
         and is_calibrated(snapshot)
     )
 
@@ -105,10 +108,24 @@ def write_preview(strokes, paper, output, pen_width_mm=0.5):
 def prepare(image_path: Path, config_path: Path, artifacts: Artifacts | None = None):
     config_text = config_path.read_text(encoding="utf-8")
     config = yaml.safe_load(config_text)
-    strokes, skeleton = vectorize(image_path, config)
+    smoothing = []
+    strokes, skeleton = vectorize(image_path, config, diagnostics=smoothing)
     job = make_job(strokes, config)
     artifacts = artifacts if artifacts is not None else Artifacts.create()
     artifacts.path("drawing_config", ".yaml").write_text(config_text, encoding="utf-8")
+    artifacts.path("smoothing", ".json").write_text(
+        json.dumps(
+            {
+                "algorithm": "constrained_cubic_bspline_v1",
+                "stroke_index_space": "before_ordering",
+                "spans": smoothing,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     skeleton_path = artifacts.path("skeleton", ".png")
     if not cv2.imwrite(str(skeleton_path), 255 - skeleton):
         raise OSError(f"无法保存骨架图：{skeleton_path}")

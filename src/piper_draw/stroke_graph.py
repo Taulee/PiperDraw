@@ -135,6 +135,8 @@ def trace_strokes(
     join_angle_deg=35.0,
     direction_lookahead_mm=0.8,
     junction_span_mm=0.5,
+    *,
+    with_anchors=False,
 ):
     """归并微小交汇簇，按局部方向接续；不跨空白补线或删除真实短桥。"""
     neighbors = _neighbors(mask)
@@ -167,6 +169,7 @@ def trace_strokes(
         pairs.update(_pair_ports(ports, directions, join_angle_deg))
 
     used = set()
+    junction_points = {tuple(route[0]) for route in routes.values()}
     strokes = []
     # 先走开放笔画，剩下的成对端口构成闭环。
     ports = [(i, side) for i in range(len(chains)) for side in (0, 1)]
@@ -191,5 +194,12 @@ def trace_strokes(
         array = np.asarray(points)
         length = np.linalg.norm(np.diff(array, axis=0), axis=1).sum() * pixel_size_mm
         if length >= min_stroke_mm or protected:
-            strokes.append((array, points[0] == points[-1], protected))
+            stroke = (array, points[0] == points[-1], protected)
+            if with_anchors:
+                anchors = np.array(
+                    [i for i, point in enumerate(points) if tuple(point) in junction_points],
+                    dtype=int,
+                )
+                stroke += (anchors,)
+            strokes.append(stroke)
     return strokes

@@ -145,3 +145,4 @@ Mac 通过 SSH 转发服务器 8765 端口，在 Foxglove 连接 `ws://127.0.0.1
 
 原 GPU 验证命令和范围见 [验证记录](docs/verification.md)，坐标、接口和数据流见 [技术说明](docs/project-guide.md)。
 源机真机连接和固件核对记录见 [Orange Pi 真机连接记录](docs/hardware-connection.md)。迁移后需在目标机重新检查 CAN、设备配置及标定。
+曲线平滑的改动、离线对照、重新生成任务和 Git 回退方法见 [路径平滑实施记录](docs/path-smoothing-results.md)。

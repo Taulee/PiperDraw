@@ -3,7 +3,7 @@ from itertools import pairwise
 import numpy as np
 import pytest
 
-from piper_draw.curves import smooth_path
+from piper_draw.curves import _has_intersection, smooth_path
 
 
 def _dense(points, step=0.01):
@@ -114,7 +114,10 @@ def test_smoothing_that_would_cross_a_nearby_fold_is_rejected():
             [1.88, -2.36],
         ]
     )
-    assert np.array_equal(smooth_path(points, False, 0.8), points)
+    result = smooth_path(points, False, 0.8)
+    assert not _has_intersection(result, False)
+    assert np.array_equal(result[[0, -1]], points[[0, -1]])
+    assert _distance_to_path(_dense(result), points).max() <= 0.8 + 1e-8
 
 
 def test_duplicate_points_are_removed_and_unclosed_loop_is_closed():
