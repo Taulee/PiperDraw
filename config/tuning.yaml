@@ -1,0 +1,74 @@
+evaluation_pixels: 1024
+coverage_tolerance_mm: 0.5
+max_coverage_drop: 0.005
+max_local_coverage_drop: 0.05
+max_excess_increase: 0.005
+max_time_increase: 0.02
+profiles:
+  simple_raw:
+    mode: simple
+    spur_length_mm: 0.0
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.0
+  simple_smooth:
+    mode: simple
+    spur_length_mm: 0.0
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.2
+  simple_spur_04:
+    mode: simple
+    spur_length_mm: 0.4
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.2
+  simple_spur_08:
+    mode: simple
+    spur_length_mm: 0.8
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.2
+  simple_smooth_035:
+    mode: simple
+    spur_length_mm: 0.4
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.35
+  simple_span_2:
+    mode: simple
+    spur_length_mm: 0.4
+    smoothing_span_mm: 2.0
+    simplify_mm: 0.2
+  simple_join_50:
+    mode: simple
+    spur_length_mm: 0.4
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.2
+    join_angle_deg: 50.0
+  simple_holes_025:
+    mode: simple
+    spur_length_mm: 0.8
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.2
+    small_hole_area_mm2: 0.25
+  simple_holes_08:
+    mode: simple
+    spur_length_mm: 0.8
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.2
+    small_hole_area_mm2: 0.8
+  simple_holes_10:
+    mode: simple
+    spur_length_mm: 0.8
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.2
+    small_hole_area_mm2: 1.0
+  simple_holes_08_smooth_035:
+    mode: simple
+    spur_length_mm: 0.8
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.35
+    small_hole_area_mm2: 0.8
+  simple_holes_08_spur_04:
+    mode: simple
+    spur_length_mm: 0.4
+    smoothing_span_mm: 4.0
+    simplify_mm: 0.2
+    small_hole_area_mm2: 0.8
+reference_small_hole_area_mm2: 0.8

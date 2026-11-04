@@ -1,0 +1,17 @@
+# 当前 Orange Pi 所连接的 Piper；命令行参数可显式覆盖连接参数。
+can: can0
+protocol: v3
+dh_version: new
+gripper_present: false
+# 阶段速度由已计时轨迹约束，取消 SDK 原先固定 10% 的二次限速。
+firmware_speed_percent: 100
+# 正常完成、取消和可受控故障均返回待机位，随后保留后端位置保持。
+# 默认使用页面保存的 output/hardware/parking.json；也可填写 positions_rad 六轴弧度。
+return_to_idle:
+  enabled: true
+  velocity_scale: 0.2
+  acceleration_scale: 0.4
+  min_tip_height_mm: 4.0
+  timeout_s: 120.0
+# 宿主与容器必须挂载同一目录；锁文件不随进程退出删除。
+lock_dir: ../output/hardware/locks

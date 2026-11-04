@@ -1,0 +1,6 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: piper_description
+    relative_path: urdf/piper_description.urdf
+  srdf:
+    relative_path: config/piper.srdf

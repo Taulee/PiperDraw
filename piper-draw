@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# 参数直接交给容器中的 Python CLI；--ros 选择带 MoveIt 的完整环境。
+set -euo pipefail
+PIPER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PIPER_IMAGE="${PIPER_HARDWARE_IMAGE:-piperdraw/hardware:0.1}"
+PIPER_RUNTIME=()
+if [[ ${1:-} == --ros ]]; then
+  PIPER_IMAGE="${PIPER_ROS_IMAGE:-piperdraw/ros:humble}"
+  PIPER_RUNTIME+=(--ipc host)
+  shift
+elif [[ ${1:-} == draw || ${1:-} == history || ${1:-} == stop ]]; then
+  PIPER_IMAGE="${PIPER_ROS_IMAGE:-piperdraw/ros:humble}"
+  PIPER_RUNTIME+=(--ipc host)
+fi
+if [[ $# -eq 0 ]]; then set -- --help; fi
+PIPER_DOCKER=(docker)
+if [[ $EUID -ne 0 ]] && ! docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
+  PIPER_DOCKER=(sudo docker)
+fi
+PIPER_UID="$(id -u)"
+PIPER_GID="$(id -g)"
+if [[ $EUID -eq 0 ]]; then
+  PIPER_UID="${SUDO_UID:-$PIPER_UID}"
+  PIPER_GID="${SUDO_GID:-$PIPER_GID}"
+  install -d -o "$PIPER_UID" -g "$PIPER_GID" "$PIPER_ROOT/output" "$PIPER_ROOT/output/hardware"
+else
+  mkdir -p "$PIPER_ROOT/output/hardware"
+fi
+if [[ $1 == draw ]]; then
+  # Keep one ROS session for both the web page and the terminal.
+  PIPER_COMPOSE=(env "PIPER_UID=$PIPER_UID" "PIPER_GID=$PIPER_GID"
+    "PIPER_ROS_IMAGE=${PIPER_ROS_IMAGE:-piperdraw/ros:humble}"
+    "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-106}" docker compose --project-directory "$PIPER_ROOT")
+  if [[ ${PIPER_DOCKER[0]} == sudo ]]; then
+    PIPER_COMPOSE=(sudo "${PIPER_COMPOSE[@]}")
+  fi
+  if [[ -z $("${PIPER_COMPOSE[@]}" ps --status running -q web) ]]; then
+    "${PIPER_COMPOSE[@]}" up -d --no-build --pull never web
+  fi
+  exec "${PIPER_COMPOSE[@]}" exec -T web python3 -m piper_draw.cli "$@"
+fi
+exec "${PIPER_DOCKER[@]}" run --rm --init --network host --cap-drop ALL \
+  "${PIPER_RUNTIME[@]}" \
+  --user "$PIPER_UID:$PIPER_GID" --security-opt no-new-privileges \
+  -e "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-106}" \
+  -v "$PIPER_ROOT:/workspace:ro" \
+  -v "$PIPER_ROOT/output:/workspace/output:rw" \
+  "$PIPER_IMAGE" python3 -m piper_draw.cli "$@"

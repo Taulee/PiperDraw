@@ -1,0 +1,3 @@
+{
+    "cmake.sourceDirectory": "${workspaceFolder}/ros2_ws/src/piper_drawing"
+}

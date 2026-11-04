@@ -1,0 +1,74 @@
+{
+  "configById": {
+    "3D!piper": {
+      "fixedFrame": "base_link",
+      "followTf": "base_link",
+      "followMode": "follow-pose",
+      "synchronize": false,
+      "cameraState": {
+        "perspective": true,
+        "distance": 1.4,
+        "phi": 60,
+        "thetaOffset": 45,
+        "targetOffset": [
+          0.15,
+          0,
+          0.25
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.01,
+        "far": 100
+      },
+      "scene": {
+        "meshUpAxis": "z_up"
+      },
+      "transforms": {},
+      "topics": {
+        "/drawing_markers": {
+          "visible": true,
+          "frameLocked": false
+        }
+      },
+      "layers": {
+        "ed86226c-eed5-4c2b-a632-753a97353d57": {
+          "instanceId": "ed86226c-eed5-4c2b-a632-753a97353d57",
+          "layerId": "foxglove.Urdf",
+          "label": "PIPER 机械臂",
+          "visible": true,
+          "sourceType": "topic",
+          "topic": "/robot_description",
+          "url": "",
+          "filePath": "",
+          "parameter": "",
+          "framePrefix": "",
+          "controlMode": "transforms",
+          "jointStatesTopic": "",
+          "displayMode": "auto",
+          "fallbackColor": "#ffffff",
+          "opacity": 1,
+          "showAxis": false,
+          "showOutlines": false,
+          "order": 1
+        }
+      }
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "linkedGlobalVariables": [],
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": "3D!piper"
+}

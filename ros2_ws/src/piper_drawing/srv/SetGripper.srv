@@ -1,0 +1,6 @@
+# 总开口，单位毫米；力矩单位 N·m。
+float64 width_mm
+float64 torque_nm
+---
+bool success
+string message

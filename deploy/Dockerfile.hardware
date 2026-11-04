@@ -1,0 +1,14 @@
+ARG PIPER_BASE_IMAGE=python:3.10-slim-bookworm
+FROM ${PIPER_BASE_IMAGE}
+
+ARG PIPER_PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/workspace/src
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends iproute2 can-utils \
+    && rm -rf /var/lib/apt/lists/*
+COPY deploy/hardware-requirements.txt /opt/hardware-requirements.txt
+COPY vendor/piper_sdk /opt/piper_sdk
+RUN python -m pip install --no-cache-dir --index-url "${PIPER_PIP_INDEX}" \
+    -r /opt/hardware-requirements.txt /opt/piper_sdk
+WORKDIR /workspace
+CMD ["python", "-m", "piper_draw.cli", "--help"]

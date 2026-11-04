@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Piper 绘画控制台</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <div><h1>Piper 绘画控制台</h1><p id="environment">正在连接本地服务…</p></div>
+    <button id="stop" class="danger">停止</button>
+  </header>
+  <nav aria-label="页面导航">
+    <button data-tab="current" aria-current="page">当前任务</button>
+    <button data-tab="setup">标定与姿态</button>
+    <button data-tab="history">历史任务</button>
+    <button data-tab="configuration">配置管理</button>
+  </nav>
+  <p id="message" role="status" aria-live="polite">页面连接后可操作。</p>
+  <main>
+    <div id="current" class="tab-panel">
+      <section>
+        <h2>开始画画 <span id="draw-status" class="badge">空闲</span></h2>
+        <div class="row">
+          <label>上传图片<input id="upload" type="file" accept="image/*"></label>
+          <label class="grow">已有图片<select id="image"></select></label>
+          <button id="refresh-files">刷新图片</button>
+        </div>
+        <div class="row">
+          <label>线稿来源
+            <select id="image-source">
+              <option value="">请选择</option>
+              <option value="line_art">使用已有线稿</option>
+              <option value="photo">从照片生成线稿</option>
+            </select>
+          </label>
+          <button id="draw-start" class="primary operation ros">开始画画</button>
+        </div>
+        <p class="hint">开始后机械臂会移动。</p>
+        <p id="draw-progress" role="status"></p>
+        <div class="columns previews">
+          <figure><figcaption>选中的图片</figcaption><img id="input-preview" alt="选中的图片" hidden></figure>
+          <figure><figcaption>绘画预览</figcaption><img id="current-preview" alt="绘画预览" hidden></figure>
+        </div>
+        <details>
+          <summary>高级操作和日志</summary>
+          <div class="row">
+            <button data-operation="prepare" class="operation" id="prepare">只生成绘画任务</button>
+            <label class="grow">已有任务<select id="job"></select></label>
+            <button data-operation="plan" class="operation ros">仅规划</button>
+            <button data-operation="run" id="legacy-run" class="operation ros" hidden>手动规划并执行</button>
+            <a id="job-download" hidden>任务 YAML</a>
+          </div>
+          <img id="drawing-preview" alt="所选任务预览" hidden>
+          <button id="simulate" class="operation ros">运行仿真</button>
+          <p id="task-status" class="badge">空闲</p>
+          <pre id="task-log" tabindex="0">暂无任务日志。</pre>
+          <pre id="backend-log" tabindex="0">暂无设备日志。</pre>
+        </details>
+      </section>
+    </div>
+    <div id="setup" class="tab-panel" hidden>
+    <section id="device">
+      <h2>机械臂姿态</h2>
+      <div class="row">
+        <label>状态与采点来源<select id="source"><option value="auto">自动</option><option value="sdk">直接连接</option><option value="ros">绘画后端</option></select></label>
+        <button id="read-status" class="operation">读取状态</button>
+        <button data-operation="feedback-on" class="operation">开启周期反馈</button>
+      </div>
+      <pre id="device-status" class="small-log">尚无设备读数。</pre>
+      <div class="row">
+        <label>待机位速度 (%)<input id="speed" type="number" min="1" max="5" value="3"></label>
+        <button data-operation="save-parking" class="operation">保存当前姿态为待机位</button>
+        <button id="park" data-operation="park" class="operation" disabled>回到待机位</button>
+        <button data-operation="resume" class="operation">解除软件急停</button>
+      </div>
+      <p id="parking-status">尚未保存待机位。</p>
+      <p class="hint">保存会覆盖上一个待机位。回到待机位会使能并运动，请确认移动路径无障碍。</p>
+      <p class="hint">解除急停可能失能下落。软件停止不能替代实体急停。</p>
+      <details><summary>ROS 后端</summary>
+        <div class="row">
+          <label>运行模式<select id="mode"><option value="real">实机</option><option value="mock">仿真</option></select></label>
+          <button data-operation="bringup" class="operation ros">启动后端</button>
+          <button id="backend-stop" class="ros">停止后端</button>
+          <button data-operation="enable" class="operation ros">使能机械臂</button>
+        </div>
+        <p id="backend-status">本页面尚未启动后端。</p>
+      </details>
+    </section>
+    <section id="calibration">
+      <h2>TCP 与纸面标定 <span id="calibrated" class="badge">未标定</span></h2>
+      <div class="columns">
+        <div>
+          <h3>TCP <span id="tcp-count">0 个样本</span></h3>
+          <p>手动让笔尖以不同姿态轻触同一固定点，静止后采集。至少 4 个样本，建议 4–6 个。</p>
+          <div class="row">
+            <button data-capture="tcp" class="operation">采集 TCP 点</button>
+            <button data-samples="tcp" data-edit="undo" class="operation">撤销末点</button>
+            <button data-samples="tcp" data-edit="clear" class="operation">清空</button>
+            <button data-operation="tcp" class="operation primary">计算 TCP</button>
+          </div>
+          <ol id="tcp-samples" class="samples"></ol>
+          <p id="tcp-result" class="hint">尚未计算 TCP。</p>
+        </div>
+        <div>
+          <h3>纸面 <span id="paper-count">0 / 3 个角点</span></h3>
+          <p>从纸面上方看，依次轻触可画范围的左下、右下、左上角。首个点的笔姿用于绘画。</p>
+          <div class="row">
+            <button data-capture="paper" class="operation" id="capture-paper">采集左下角</button>
+            <button data-samples="paper" data-edit="undo" class="operation">撤销末点</button>
+            <button data-samples="paper" data-edit="clear" class="operation">清空</button>
+          </div>
+          <ol id="paper-samples" class="samples"></ol>
+          <div class="row">
+            <label>A5 方向<select id="orientation"><option value="auto">自动</option><option value="portrait">竖向 148 × 210</option><option value="landscape">横向 210 × 148</option></select></label>
+            <button data-operation="paper" class="operation primary">定位纸面并选取 A5</button>
+          </div>
+          <p id="paper-result" class="hint">尚未定位纸面。</p>
+        </div>
+      </div>
+    </section>
+    </div>
+    <div id="history" class="tab-panel" hidden>
+      <section>
+        <h2>历史任务</h2>
+        <div class="row">
+          <button id="history-refresh">刷新</button>
+          <button id="history-delete" class="operation danger-outline">删除所选</button>
+        </div>
+        <p id="history-empty">暂无历史任务。</p>
+        <div id="history-list"></div>
+      </section>
+    </div>
+    <section id="configuration" class="tab-panel" hidden>
+      <h2>工作配置</h2>
+      <p id="config-path"></p>
+      <label>配置类型<select id="config-kind"><option value="drawing">绘画参数</option><option value="device">设备</option><option value="image">图像服务</option></select></label>
+      <div class="row" id="config-import">
+        <label class="grow">导入已有绘画配置<select id="config-source"></select></label>
+        <button id="load-config" class="operation">载入为工作配置</button>
+        <button id="reload-config">重新读取</button>
+      </div>
+      <details><summary>编辑 YAML 参数</summary>
+        <p>绘画使用此处保存的参数。改动 TCP 或机械臂模型后需重新标定。</p>
+        <textarea id="config-text" rows="22" spellcheck="false" aria-label="绘画配置 YAML"></textarea>
+        <button id="save-config" class="operation">保存工作配置</button>
+      </details>
+    </section>
+  </main>
+  <footer>上传文件、工作配置、标定样本和日志保存在 output/web；原始项目配置保留。</footer>
+</body>
+</html>

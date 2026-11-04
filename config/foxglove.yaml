@@ -1,0 +1,18 @@
+/**:
+  ros__parameters:
+    # 仅供 SSH 本地转发访问，由 Mac 浏览器负责三维渲染。
+    address: "127.0.0.1"
+    port: 8765
+    remote_access: false
+    sysinfo: false
+    use_sim_time: false
+    capabilities: [connectionGraph, assets]
+    topic_whitelist:
+      - '^/(tf|tf_static|joint_states|robot_description|drawing_markers)$'
+    # 观察工具不需要向机器人发布消息、调用服务或改参数。
+    client_topic_whitelist: ['(?!)']
+    service_whitelist: ['(?!)']
+    param_whitelist: ['(?!)']
+    # 只开放 PIPER 模型资源，不开放 file:// 或其他包及目录。
+    asset_uri_allowlist:
+      - '^package://piper_description/meshes/(base_link|link[1-8]|gripper_base)\.STL$'

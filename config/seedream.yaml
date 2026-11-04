@@ -1,0 +1,6 @@
+model: doubao-seedream-5-0-flash-260915
+base_url: https://ark.cn-beijing.volces.com/api/v3
+api_key_file: api_key.txt
+api_key_env: ARK_API_KEY
+size: 1696x2400
+timeout: 180.0

@@ -1,0 +1,11 @@
+{
+  "piper_ros": {
+    "repository": "https://github.com/agilexrobotics/piper_ros.git",
+    "branch": "humble",
+    "commit": "017ffefa64511bc6325bd77ddc4e16065c152051"
+  },
+  "piper_sdk": {
+    "repository": "https://github.com/agilexrobotics/piper_sdk.git",
+    "commit": "b847e5393a7ce6ff8508d713eca7bdd3a42421b4"
+  }
+}

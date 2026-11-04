@@ -1,0 +1,30 @@
+[project]
+name = "piper-draw"
+version = "0.1.0"
+description = "卡通线稿与 Piper 无头仿真、真机绘画"
+requires-python = ">=3.10,<3.11"
+dependencies = ["numpy>=1.24,<2", "opencv-contrib-python-headless>=4.9,<4.12", "scipy>=1.10,<1.16", "pyyaml>=6,<7", "piper-sdk==0.7.0a1"]
+
+[project.scripts]
+piper-draw = "piper_draw.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.4,<9", "ruff>=0.9"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--disable-plugin-autoload"
+
+[tool.ruff]
+line-length = 100
+
+[tool.uv]
+# 每版环境使用独立文件，避免依赖缓存中的硬链接。
+link-mode = "copy"
+
+[tool.uv.sources]
+piper-sdk = {path = "vendor/piper_sdk"}

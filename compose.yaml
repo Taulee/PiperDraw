@@ -1,0 +1,39 @@
+name: piperdraw-local
+
+services:
+  web:
+    image: ${PIPER_ROS_IMAGE:-piperdraw/ros:humble}
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.ros
+      network: host
+      args:
+        PIPER_ROS_BASE_IMAGE: ${PIPER_ROS_BASE_IMAGE:-ros:humble-ros-base-jammy}
+        PIPER_ROS_APT_MIRROR: ${PIPER_ROS_APT_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu}
+        PIPER_PIP_INDEX: ${PIPER_PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        http_proxy: ${http_proxy:-${HTTP_PROXY:-}}
+        https_proxy: ${https_proxy:-${HTTPS_PROXY:-}}
+        no_proxy: ${no_proxy:-${NO_PROXY:-}}
+    network_mode: host
+    ipc: host
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    user: "${PIPER_UID:-1000}:${PIPER_GID:-1000}"
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-106}
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./output
+        target: /workspace/output
+        bind:
+          create_host_path: false
+    command: [python3, -m, piper_draw.cli, web, --host, '127.0.0.1', --port, '${PIPER_WEB_PORT:-8080}']
+    stop_grace_period: 30s
+    restart: unless-stopped

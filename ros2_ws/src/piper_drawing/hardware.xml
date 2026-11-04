@@ -1,0 +1,5 @@
+<library path="drawing_hardware">
+  <class name="piper_drawing/PiperHardware" type="drawing::PiperHardware" base_class_type="hardware_interface::SystemInterface">
+    <description>连接 Piper 官方 SDK 桥接节点的 ros2_control 位置接口。</description>
+  </class>
+</library>

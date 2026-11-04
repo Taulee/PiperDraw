@@ -1,0 +1,34 @@
+ARG PIPER_ROS_BASE_IMAGE=ros:humble-ros-base-jammy
+FROM ${PIPER_ROS_BASE_IMAGE}
+
+ARG PIPER_ROS_APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu
+ARG PIPER_PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+COPY scripts/install_ros.sh /tmp/install_ros.sh
+RUN sed -i -E -e '/^Types: /s/ deb-src//g' -e '/^deb-src /d' \
+      -e "s|https?://packages\.ros\.org/ros2/ubuntu|${PIPER_ROS_APT_MIRROR}|g" \
+      /etc/apt/sources.list.d/ros* \
+    && DEBIAN_FRONTEND=noninteractive bash /tmp/install_ros.sh \
+    && apt-get install -y --no-install-recommends python3-pip \
+    && rm -rf /var/lib/apt/lists/* /tmp/install_ros.sh
+
+COPY deploy/hardware-requirements.txt /tmp/hardware-requirements.txt
+COPY vendor/piper_sdk /tmp/piper_sdk
+RUN /usr/bin/python3 -m pip install --no-cache-dir --index-url "${PIPER_PIP_INDEX}" \
+      --target /opt/piper-python -r /tmp/hardware-requirements.txt /tmp/piper_sdk \
+    && rm -rf /tmp/piper_sdk /tmp/hardware-requirements.txt
+
+COPY ros2_ws/src /tmp/piper_ros_ws/src
+COPY vendor/piper_ros/src/piper_description /tmp/piper_ros_ws/src/piper_description
+RUN source /opt/ros/humble/setup.bash \
+    && cd /tmp/piper_ros_ws \
+    && CMAKE_BUILD_PARALLEL_LEVEL=4 colcon build --merge-install --install-base /opt/piper-ros \
+      --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+    && rm -rf /tmp/piper_ros_ws
+
+ENV PYTHONPATH=/workspace/src:/opt/piper-python \
+    PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+    ROS_DOMAIN_ID=106 ROS_LOCALHOST_ONLY=1 ROS_LOG_DIR=/workspace/output/ros_logs
+WORKDIR /workspace
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/ros/humble/setup.bash && source /opt/piper-ros/local_setup.bash && exec \"$@\"", "--"]
+CMD ["/usr/bin/python3", "-m", "piper_draw.cli", "web"]

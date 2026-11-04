@@ -1,0 +1,13 @@
+/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+/ros2_ws/build/
+/ros2_ws/install/
+/ros2_ws/log/
+/api_key.txt
+/config/real.yaml
+/output/
+/vendor/
