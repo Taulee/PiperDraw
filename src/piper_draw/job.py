@@ -116,7 +116,7 @@ def prepare(image_path: Path, config_path: Path, artifacts: Artifacts | None = N
     artifacts.path("smoothing", ".json").write_text(
         json.dumps(
             {
-                "algorithm": "constrained_cubic_bspline_v2",
+                "algorithm": "constrained_cubic_bspline_v1",
                 "stroke_index_space": "before_ordering",
                 "spans": smoothing,
             },

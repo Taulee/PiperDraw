@@ -149,7 +149,7 @@ def test_raster_line_to_task_has_low_normal_wave(tmp_path, a, b):
     job = prepare(path, settings, artifacts)
     assert len([segment for segment in job["segments"] if segment["kind"] == "draw"]) == 1
     report = json.loads(artifacts.path("smoothing", ".json").read_text())
-    assert report["algorithm"] == "constrained_cubic_bspline_v2"
+    assert report["algorithm"] == "constrained_cubic_bspline_v1"
     assert all(row["method"] != "preserved" for row in report["spans"])
 
 
