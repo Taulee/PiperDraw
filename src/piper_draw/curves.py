@@ -78,7 +78,7 @@ def _new_connections(candidate, other, original, original_other):
     return False
 
 
-def protect_connections(paths, originals, diagnostics=None):
+def protect_connections(paths, originals, diagnostics=None, *, fallback_records=None):
     """逐笔接受候选，对尚未处理的笔画使用原路径，保证不引入新连接。"""
     accepted = list(originals)
     bounds = [(points.min(axis=0), points.max(axis=0)) for points, _ in originals]
@@ -99,23 +99,42 @@ def protect_connections(paths, originals, diagnostics=None):
                 if diagnostics is not None:
                     # 替换该笔之前的成功记录，不能把被撤销的拟合统计成成功。
                     diagnostics[:] = [row for row in diagnostics if row.get("stroke") != index]
-                    diagnostics.append(
-                        {
-                            "stroke": index,
-                            "method": "preserved",
-                            "reason": "new_interstroke_connection",
-                            "source_length_mm": float(
-                                np.linalg.norm(np.diff(original, axis=0), axis=1).sum()
-                            ),
-                            "start_xy_mm": original[0].tolist(),
-                            "end_xy_mm": original[-1].tolist(),
-                        }
-                    )
+                    if fallback_records is not None:
+                        diagnostics.extend(
+                            dict(row, refinement_rejected="new_interstroke_connection")
+                            for row in fallback_records
+                            if row.get("stroke") == index
+                        )
+                    else:
+                        diagnostics.append(
+                            {
+                                "stroke": index,
+                                "method": "preserved",
+                                "reason": "new_interstroke_connection",
+                                "source_length_mm": float(
+                                    np.linalg.norm(np.diff(original, axis=0), axis=1).sum()
+                                ),
+                                "start_xy_mm": original[0].tolist(),
+                                "end_xy_mm": original[-1].tolist(),
+                            }
+                        )
                 break
         if not rejected:
             accepted[index] = (candidate, closed)
             bounds[index] = (low, high)
     return accepted
+
+
+def protect_refinements(paths, originals, baselines, diagnostics=None):
+    """先保护完整基线，再尝试细化；新接触不能让已平滑笔画退回像素折线。"""
+    baseline_paths = [(points, original[1]) for (points, _), original in zip(baselines, originals)]
+    baseline_records = [
+        dict(row, stroke=index) for index, (_, records) in enumerate(baselines) for row in records
+    ]
+    safe_baselines = protect_connections(baseline_paths, originals, baseline_records)
+    return protect_connections(
+        paths, safe_baselines, diagnostics, fallback_records=baseline_records
+    )
 
 
 def _has_intersection(points, closed):
@@ -206,7 +225,112 @@ def _fit_spline(source, parameters, spacing, smoothing_length, fixed, periodic):
     return BSpline(knots, solution, 3)
 
 
-def _fit_span(source, tolerance, supported, max_step, chord_error, fixed, periodic):
+def _bending_energy(points, closed):
+    """在固定毫米尺度重采样最终折线，避免用路点数量衡量平滑程度。"""
+    lengths = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))]
+    energy = []
+    for step in (0.25, 0.5, 1.0):
+        count = max(3, int(np.ceil(lengths[-1] / step)))
+        samples = np.linspace(0, lengths[-1], count + 1)
+        values = np.column_stack([np.interp(samples, lengths, points[:, i]) for i in range(2)])
+        delta = np.diff(values, axis=0)
+        norms = np.linalg.norm(delta, axis=1)
+        directions = np.arctan2(delta[:, 1], delta[:, 0])
+        if closed:
+            turns = np.roll(directions, -1) - directions
+            intervals = (norms + np.roll(norms, -1)) / 2
+        else:
+            turns = np.diff(directions)
+            intervals = (norms[:-1] + norms[1:]) / 2
+        turns = np.arctan2(np.sin(turns), np.cos(turns))
+        energy.append(float(np.sum(turns**2 / np.maximum(intervals, 1e-12))))
+    return np.asarray(energy)
+
+
+def _sample_fit(curve, source, parameters, fixed, periodic, max_step, chord_error, tolerance):
+    candidate, origins = sample_curve(
+        curve, max_step, min(chord_error, tolerance / 4), parameters[fixed]
+    )
+    # 消除求解器舍入，结构点必须精确保留。
+    for index in fixed:
+        candidate[np.searchsorted(origins, parameters[index])] = source[index]
+    if periodic:
+        candidate[-1] = candidate[0]
+    return candidate, origins
+
+
+def _refine_fit(
+    source,
+    parameters,
+    candidate,
+    deviation,
+    tolerance,
+    supported,
+    *,
+    spacing,
+    smoothing_length,
+    fixed,
+    periodic,
+    max_step,
+    chord_error,
+):
+    """保留合格基线；固定控制点布局，独立搜索更强正则化。
+
+    首轮使用的 0.6 mm 平滑尺度不再扩大。只修复重试中减弱正则导致的
+    过拟合，不放宽几何误差或支撑约束，也不增加额外像素锚点。
+    """
+    baseline = _bending_energy(candidate, periodic)
+    best = candidate, deviation, smoothing_length, baseline
+    evaluated = {float(smoothing_length)}
+    attempts = 0
+
+    def evaluate(strength):
+        nonlocal best, attempts
+        strength = float(strength)
+        if strength in evaluated:
+            return
+        evaluated.add(strength)
+        attempts += 1
+        try:
+            curve = _fit_spline(source, parameters, spacing, strength, fixed, periodic)
+            points, origins = _sample_fit(
+                curve, source, parameters, fixed, periodic, max_step, chord_error, tolerance
+            )
+        except (LinAlgError, ValueError):
+            return
+        error = _deviation(source, parameters, points, origins)
+        if error > tolerance or not supported(points) or _has_intersection(points, periodic):
+            return
+        energy = _bending_energy(points, periodic)
+        # 多尺度总能量必须下降，并限制单个尺度退化；这不是墨迹摆幅保证。
+        if energy.sum() < best[3].sum() * (1 - 1e-6) and np.all(energy <= baseline * 1.05 + 1e-10):
+            best = points, error, strength, energy
+
+    if smoothing_length < 0.6:
+        grid = np.geomspace(smoothing_length, 0.6, 5)
+        for strength in grid[1:]:
+            evaluate(strength)
+        # 不假定支撑/拓扑判据随正则强度单调；检查整张粗网格后再局部细化。
+        index = int(np.argmin(np.abs(grid - best[2])))
+        for neighbor in (index - 1, index + 1):
+            if 0 <= neighbor < len(grid):
+                evaluate(np.sqrt(grid[index] * grid[neighbor]))
+    points, error, strength, energy = best
+    return points, {
+        "max_deviation_mm": error,
+        "baseline_max_deviation_mm": deviation,
+        "control_spacing_mm": spacing,
+        "baseline_smoothing_length_mm": smoothing_length,
+        "smoothing_length_mm": strength,
+        "refinement_attempts": attempts,
+        "refined": strength != smoothing_length,
+        "bending_energy_before": baseline.tolist(),
+        "bending_energy_after": energy.tolist(),
+        "bending_scales_mm": [0.25, 0.5, 1.0],
+    }
+
+
+def _fit_span(source, tolerance, supported, max_step, chord_error, fixed, periodic, baseline=None):
     parameters = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(source, axis=0), axis=1))]
     length = float(parameters[-1])
     if not periodic:
@@ -228,17 +352,12 @@ def _fit_span(source, tolerance, supported, max_step, chord_error, fixed, period
         smoothing_length = 0.6 / 2 ** min(attempt, 4)
         try:
             curve = _fit_spline(source, parameters, spacing, smoothing_length, fixed, periodic)
-            candidate, origins = sample_curve(
-                curve, max_step, min(chord_error, tolerance / 4), parameters[fixed]
+            candidate, origins = _sample_fit(
+                curve, source, parameters, fixed, periodic, max_step, chord_error, tolerance
             )
         except (LinAlgError, ValueError):
             reason = "fit_or_sampling_budget"
             continue
-        # 消除求解器舍入，输出中的结构坐标必须与输入精确一致。
-        for index in fixed:
-            candidate[np.searchsorted(origins, parameters[index])] = source[index]
-        if periodic:
-            candidate[-1] = candidate[0]
         deviation = _deviation(source, parameters, candidate, origins)
         if deviation > tolerance:
             reason = "geometry_deviation"
@@ -262,11 +381,34 @@ def _fit_span(source, tolerance, supported, max_step, chord_error, fixed, period
         if _has_intersection(candidate, periodic):
             reason = "new_self_intersection"
             continue
-        return candidate, {
+        record = {
             "method": "spline",
             "max_deviation_mm": deviation,
             "support_anchor_count": len(fixed) - len(base_fixed),
             "attempts": attempt + 1,
+            "control_spacing_mm": spacing,
+            "smoothing_length_mm": smoothing_length,
+            "refined": False,
+        }
+        if baseline is not None:
+            baseline.append((candidate, dict(record)))
+        candidate, refinement = _refine_fit(
+            source,
+            parameters,
+            candidate,
+            deviation,
+            tolerance,
+            supported,
+            spacing=spacing,
+            smoothing_length=smoothing_length,
+            fixed=fixed,
+            periodic=periodic,
+            max_step=max_step,
+            chord_error=chord_error,
+        )
+        return candidate, {
+            **record,
+            **refinement,
         }
     return source.copy(), {"method": "preserved", "reason": reason, "length_mm": length}
 
@@ -314,11 +456,13 @@ def smooth_path(
     max_step_mm=1.0,
     chord_error_mm=0.03,
     diagnostics=None,
+    baseline=None,
 ) -> np.ndarray:
     """结构点固定的三次 B 样条拟合，检查最终折线而非只检查样条。
 
     无尖角闭环采用 C2 周期约束。支撑失败时有限次重拟合仍保持曲线连续；
-    不能通过的结构段明确保留并记入 diagnostics。
+    不能通过的结构段明确保留并记入 diagnostics。baseline 可接收整笔细化前的
+    路径和诊断，供全图连接保护使用。
     """
     points = np.asarray(points, dtype=float)
     if not np.isfinite(tolerance_mm) or tolerance_mm < 0:
@@ -326,9 +470,9 @@ def smooth_path(
     supported = supported if supported is not None else lambda _: True
     records = []
 
-    def finish(result):
-        if diagnostics is not None:
-            for record in records:
+    def finish(result, baseline_points=None, baseline_records=None):
+        for rows in (records, baseline_records or []):
+            for record in rows:
                 record.setdefault(
                     "source_length_mm",
                     float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum())
@@ -338,7 +482,18 @@ def smooth_path(
                 if len(points):
                     record.setdefault("start_xy_mm", points[0].tolist())
                     record.setdefault("end_xy_mm", points[-1].tolist())
+        if diagnostics is not None:
             diagnostics.extend(records)
+        if baseline is not None:
+            baseline.append(
+                (
+                    result if baseline_points is None else baseline_points,
+                    [
+                        dict(row)
+                        for row in (records if baseline_records is None else baseline_records)
+                    ],
+                )
+            )
         return result
 
     if len(points) < 3 or tolerance_mm == 0:
@@ -361,33 +516,62 @@ def smooth_path(
     fixed = [i for i, point in enumerate(points) if tuple(point) in fixed_coordinates]
     periodic = closed and not corners
     anchors = [0, len(points) - 1] if periodic else sorted({0, len(points) - 1, *corners})
-    spans = []
+    spans, baseline_spans, baseline_records = [], [], []
     for first, last in pairwise(anchors):
         source = points[first : last + 1]
         local_fixed = [i - first for i in fixed if first <= i <= last]
+        span_baseline = []
         if len(source) <= 2:
             candidate, record = source.copy(), {"method": "preserved", "reason": "short"}
         else:
             candidate, record = _fit_span(
-                source, tolerance_mm, supported, max_step_mm, chord_error_mm, local_fixed, periodic
+                source,
+                tolerance_mm,
+                supported,
+                max_step_mm,
+                chord_error_mm,
+                local_fixed,
+                periodic,
+                baseline=span_baseline,
             )
-        record.update(
-            source_start=first,
-            source_end=last,
-            source_length_mm=float(np.linalg.norm(np.diff(source, axis=0), axis=1).sum()),
-            start_xy_mm=source[0].tolist(),
-            end_xy_mm=source[-1].tolist(),
+        baseline_points, baseline_record = (
+            span_baseline[0] if span_baseline else (candidate, dict(record))
         )
+        metadata = {
+            "source_start": first,
+            "source_end": last,
+            "source_length_mm": float(np.linalg.norm(np.diff(source, axis=0), axis=1).sum()),
+            "start_xy_mm": source[0].tolist(),
+            "end_xy_mm": source[-1].tolist(),
+        }
+        record.update(metadata)
+        baseline_record.update(metadata)
         records.append(record)
         spans.append(candidate)
+        baseline_records.append(baseline_record)
+        baseline_spans.append(baseline_points)
     result = np.vstack([spans[0], *[span[1:] for span in spans[1:]]])
-    if (closed and len(result) < 4) or _has_intersection(result, closed) or not supported(result):
-        records = [
+    baseline_result = np.vstack([baseline_spans[0], *[span[1:] for span in baseline_spans[1:]]])
+
+    def valid(path):
+        return (
+            (not closed or len(path) >= 4)
+            and not _has_intersection(path, closed)
+            and supported(path)
+        )
+
+    if not valid(baseline_result):
+        baseline_result = original
+        baseline_records = [
             {
                 "method": "preserved",
                 "reason": "final_structure_or_support",
                 "source_length_mm": float(np.linalg.norm(np.diff(original, axis=0), axis=1).sum()),
             }
         ]
-        return finish(original)
-    return finish(result)
+    if not valid(result):
+        result = baseline_result
+        records = [
+            dict(row, refinement_rejected="final_structure_or_support") for row in baseline_records
+        ]
+    return finish(result, baseline_result, baseline_records)

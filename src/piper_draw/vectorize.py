@@ -5,7 +5,7 @@ from itertools import pairwise
 import cv2
 import numpy as np
 
-from .curves import protect_connections, smooth_path
+from .curves import protect_refinements, smooth_path
 from .geometry import drawing_bounds, resample
 from .marks import extract_marks, mark_support_mask
 from .stroke_graph import trace, trace_strokes
@@ -225,7 +225,7 @@ def vectorize(path, config, *, diagnostics=None):
     paths = [(pixels, closed, mask, anchors) for pixels, closed, _, anchors in chains] + [
         (pixels, closed, mark_mask, np.array([], dtype=int)) for pixels, closed in marks
     ]
-    candidates, originals = [], []
+    candidates, originals, baselines = [], [], []
     for pixels, closed, support_mask, anchors in paths:
         stroke_index = len(originals)
         points = np.column_stack((pixels[:, 1], height - 1 - pixels[:, 0])) * factor + offset
@@ -243,6 +243,7 @@ def vectorize(path, config, *, diagnostics=None):
             max_step_mm=options["step_mm"],
             chord_error_mm=options.get("curve_chord_error_mm", 0.03),
             diagnostics=records,
+            baseline=baselines,
         )
         if diagnostics is not None:
             diagnostics.extend(dict(record, stroke=stroke_index) for record in records)
@@ -250,7 +251,7 @@ def vectorize(path, config, *, diagnostics=None):
         candidates.append((candidate, closed))
     strokes = [
         Stroke(resample(points, options["step_mm"]), closed)
-        for points, closed in protect_connections(candidates, originals, diagnostics)
+        for points, closed in protect_refinements(candidates, originals, baselines, diagnostics)
     ]
     if not strokes:
         raise NoDrawableLinesError("图像中没有可绘制的线条")

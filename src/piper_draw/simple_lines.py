@@ -215,6 +215,7 @@ def simple_paths(mask, pixel_size_mm, offset, options, *, diagnostics=None):
     height = mask.shape[0]
     paths = []
     originals = []
+    baselines = []
     for stroke_index, (pixels, closed, _, anchors) in enumerate(chains):
         points = np.column_stack((pixels[:, 1], height - 1 - pixels[:, 0])) * pixel_size_mm + offset
         records = []
@@ -228,6 +229,7 @@ def simple_paths(mask, pixel_size_mm, offset, options, *, diagnostics=None):
             max_step_mm=options["step_mm"],
             chord_error_mm=options.get("curve_chord_error_mm", 0.03),
             diagnostics=records,
+            baseline=baselines,
         )
         if diagnostics is not None:
             diagnostics.extend(dict(record, stroke=stroke_index) for record in records)
@@ -237,21 +239,19 @@ def simple_paths(mask, pixel_size_mm, offset, options, *, diagnostics=None):
         line_mask, original_skeleton, pixel_size_mm, pen_width_mm
     ):
         points = np.column_stack((pixels[:, 1], height - 1 - pixels[:, 0])) * pixel_size_mm + offset
+        mark_record = {
+            "stroke": len(paths),
+            "method": "preserved",
+            "reason": "mark_geometry",
+            "source_length_mm": float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum()),
+            "start_xy_mm": points[0].tolist(),
+            "end_xy_mm": points[-1].tolist(),
+        }
         if diagnostics is not None:
-            diagnostics.append(
-                {
-                    "stroke": len(paths),
-                    "method": "preserved",
-                    "reason": "mark_geometry",
-                    "source_length_mm": float(
-                        np.linalg.norm(np.diff(points, axis=0), axis=1).sum()
-                    ),
-                    "start_xy_mm": points[0].tolist(),
-                    "end_xy_mm": points[-1].tolist(),
-                }
-            )
+            diagnostics.append(mark_record)
+        baselines.append((points, [mark_record]))
         originals.append((points, closed))
         paths.append((points, closed))
-    from .curves import protect_connections
+    from .curves import protect_refinements
 
-    return protect_connections(paths, originals, diagnostics), skeleton
+    return protect_refinements(paths, originals, baselines, diagnostics), skeleton
