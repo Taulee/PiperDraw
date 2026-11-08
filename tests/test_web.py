@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 import yaml
 
+from piper_draw.calibration import robot_identity
 from piper_draw.web import BusyError, Handler, ProcessTask, WebApp
 
 
@@ -172,6 +173,47 @@ def test_clear_samples_invalidates_tcp_and_paper(server):
     result = yaml.safe_load(app.config.read_text())
     assert not result["calibrated"] and result["calibration"] == {}
     assert not app.samples_path("tcp").exists()
+
+
+def test_paper_capture_accepts_fourth_point_and_rejects_fifth(app, monkeypatch):
+    spawn = Mock()
+    spawn.return_value.process.poll.return_value = 0
+    monkeypatch.setattr(app, "_spawn", spawn)
+    samples = app.samples_path("paper")
+    samples.write_text(yaml.safe_dump({"samples": [{}, {}, {}]}))
+    app.start({"operation": "capture", "kind": "paper", "source": "sdk"})
+    assert spawn.call_args.args[1][:2] == ["calibrate", "capture"]
+    spawn.reset_mock()
+    samples.write_text(yaml.safe_dump({"samples": [{}, {}, {}, {}]}))
+    with pytest.raises(ValueError, match="四个点"):
+        app.start({"operation": "capture", "kind": "paper", "source": "sdk"})
+    spawn.assert_not_called()
+
+
+def test_paper_quadrilateral_solve_over_http(server):
+    _, app = server
+    config = yaml.safe_load(app.config.read_text())
+    identity = robot_identity(config)
+    offset = config["tool"]["tcp_offset_mm"]
+    config["calibration"] = {"robot": identity, "tcp": {"tcp_offset_mm": offset}}
+    app.config.write_text(yaml.safe_dump(config))
+    points = np.array([[0, 0, 0], [250, 0, 0], [170, 280, 0], [20, 280, 0]])
+    samples = [{"position_mm": (point - np.array(offset) * [1, -1, -1]).tolist(),
+                "quaternion_xyzw": [1, 0, 0, 0]} for point in points]
+    app.samples_path("paper").write_text(yaml.safe_dump({"robot": identity, "samples": samples}))
+    assert http(server, "/api/action", {"operation": "paper", "orientation": "auto"})[0] == 200
+    wait_until(lambda: app.task.process.poll() is not None)
+    assert app.task.snapshot()["status"] == "succeeded", app.task.snapshot()["log"]
+    result = yaml.safe_load(app.config.read_text())
+    assert result["calibrated"] and result["calibration_id"].startswith("paper-")
+    assert result["calibration"]["paper"]["orientation"] == "portrait"
+    assert len(result["calibration"]["paper"]["measured_corners_mm"]) == 4
+    area = result["paper"]["drawing_area"]
+    polygon = points[:, :2].astype(np.float32)
+    for x in (0, area["width_mm"]):
+        for y in (0, area["height_mm"]):
+            assert cv2.pointPolygonTest(polygon, tuple(np.array(area["origin_mm"]) + [x, y]),
+                                       True) >= -1e-4
 
 
 def test_parking_requires_saved_pose_and_preserves_calibration(app, monkeypatch):

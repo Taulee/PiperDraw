@@ -92,7 +92,7 @@ HTTP 层只构造允许的 CLI 参数，以独立进程复用已有操作及中�
 上传、工作配置和日志保存到 `output/web/`，操作与部署见 [Web 使用说明](web.md)。
 
 标定使用同样的业务／CLI 分工，接口与流程见 [TCP 标定与纸面定位](calibration.md)。
-`calibration.py` 提供只读采点、TCP 最小二乘和纸面定位；`calibration_cli.py` 负责参数与 YAML 写入。
+`calibration.py` 提供只读采点、TCP 最小二乘和纸面四角定位，在实测四边形内选取完整 A5；`calibration_cli.py` 负责参数与 YAML 写入。
 `paper.drawing_area` 可选，包含纸面内的二维 `origin_mm`、`width_mm`、`height_mm`；
 未设置时仍使用整个纸面，设置后线稿缩放与留白作用于选区，笔画坐标仍以完整纸面原点表达。
 纸面场景、碰撞和既有任务格式保持使用完整纸面，TCP 与姿态仍由现有任务生成器转换。

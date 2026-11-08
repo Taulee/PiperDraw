@@ -105,8 +105,8 @@
           <p id="tcp-result" class="hint">尚未计算 TCP。</p>
         </div>
         <div>
-          <h3>纸面 <span id="paper-count">0 / 3 个角点</span></h3>
-          <p>从纸面上方看，依次轻触可画范围的左下、右下、左上角。首个点的笔姿用于绘画。</p>
+          <h3>纸面 <span id="paper-count">0 / 4 个角点</span></h3>
+          <p>从纸面上方看，依次轻触可画范围的左下、右下、右上、左上角。四点可围成不规则四边形，程序从内部截取完整 A5。首个点的笔姿用于绘画。</p>
           <div class="row">
             <button data-capture="paper" class="operation" id="capture-paper">采集左下角</button>
             <button data-samples="paper" data-edit="undo" class="operation">撤销末点</button>
@@ -115,7 +115,7 @@
           <ol id="paper-samples" class="samples"></ol>
           <div class="row">
             <label>A5 方向<select id="orientation"><option value="auto">自动</option><option value="portrait">竖向 148 × 210</option><option value="landscape">横向 210 × 148</option></select></label>
-            <button data-operation="paper" class="operation primary">定位纸面并选取 A5</button>
+            <button data-operation="paper" class="operation primary" id="locate-paper" disabled>定位纸面并选取 A5</button>
           </div>
           <p id="paper-result" class="hint">尚未定位纸面。</p>
         </div>

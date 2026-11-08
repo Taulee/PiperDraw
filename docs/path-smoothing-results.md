@@ -6,11 +6,11 @@
 
 原目录没有 Git 仓库。本次先初始化并提交原项目，再修改代码：
 
-- 实施前提交：`306a301`，标签 `before-path-smoothing`，保留在 `master` 分支。
-- 实施分支：`path-smoothing`；实现提交打标签 `path-smoothing-v1`。
+- 实施前提交 `306a301` 对应标签 `before-path-smoothing`。
+- 实现提交对应标签 `path-smoothing-v1`，已纳入 `main` 的提交历史。
 - 沿用原忽略规则：API 密钥、`output/`、`vendor/`、本机 `config/real.yaml`、环境及构建产物不入库。本次没有改动密钥、vendor、本机配置或历史任务。
 
-实现提交完成后，在没有未提交改动时，可执行 `git revert path-smoothing-v1` 撤销本次实现。也可执行 `git switch master` 切回实施前源码。两种方式都不会删除忽略的历史任务。运行中的进程需重新加载代码，Git 回退不会自动停止或重启机械臂后端。
+工作区干净时，可执行 `git revert path-smoothing-v1` 撤销本次实现。需要查看实施前的源码时，可执行 `git switch --detach before-path-smoothing`，查看后用 `git switch -` 返回原分支。两种方式都会保留 Git 忽略的历史任务。运行中的进程需重新加载代码，Git 回退不会自动停止或重启机械臂后端。
 
 ## 实现内容与配置
 

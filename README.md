@@ -3,6 +3,9 @@
 在 Linux 上使用 Docker 运行。Web 容器包含 ROS 2 Humble 和 MoveIt；轻量容器提供图像处理、标定与 SDK 诊断。启动、异机迁移和离线搬运见 [Docker 使用与迁移](docs/docker.md)。
 
 ```bash
+git clone https://github.com/Taulee/PiperDraw.git ~/piper-draw
+cd ~/piper-draw
+python3 scripts/fetch_vendor.py
 mkdir -p output
 sudo PIPER_UID="$(id -u)" PIPER_GID="$(id -g)" docker compose up -d
 # 浏览器访问 http://127.0.0.1:8080
@@ -117,7 +120,7 @@ uv run piper-draw robot gripper --width-mm 15 --torque-nm 0.3
 
 首次夹笔需手动摆正位置、角度和伸出长度。每次重夹、换笔或换 3D 打印夹具后，重新测量法兰 `link6` 到笔尖的 TCP。原装夹爪保留在碰撞模型中；以后改夹具时需更新几何模型。
 
-实机配置需要测量纸面三点、TCP 和笔姿。`config/real.example.yaml` 是未标定模板。通过 [标定命令](docs/calibration.md) 采集法兰位姿，依次求 TCP、定位纸面并选取 A5。求解成功后，程序生成独立 `calibration_id`，并自动设置 `calibrated: true`。以下 `--config` 指向最终实测配置，用于生成实机任务。
+实机配置需要测量纸面四角、TCP 和笔姿。`config/real.example.yaml` 是未标定模板。通过 [标定命令](docs/calibration.md) 采集法兰位姿，依次求 TCP、定位纸面并在四边形内选取 A5。求解成功后，程序生成独立 `calibration_id`，并自动设置 `calibrated: true`。以下 `--config` 指向最终实测配置，用于生成实机任务。
 
 ```bash
 uv run piper-draw prepare /绝对路径/你的线稿.png --from-line-art --config config/real.yaml

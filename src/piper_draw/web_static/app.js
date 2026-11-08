@@ -205,9 +205,10 @@ async function refreshState() {
     const tcp = state.samples.tcp;
     const paper = state.samples.paper;
     $("tcp-count").textContent = `${tcp.length} 个样本`;
-    $("paper-count").textContent = `${paper.length} / 3 个角点`;
-    $("capture-paper").textContent = ["采集左下角", "采集右下角", "采集左上角"][paper.length] || "已采齐三个角点";
-    $("capture-paper").disabled = !!busy || paper.length >= 3;
+    $("paper-count").textContent = `${paper.length} / 4 个角点`;
+    $("capture-paper").textContent = ["采集左下角", "采集右下角", "采集右上角", "采集左上角"][paper.length] || "已采齐四个角点";
+    $("capture-paper").disabled = !!busy || paper.length >= 4;
+    $("locate-paper").disabled = !!busy || paper.length !== 4;
     $("park").disabled = !!busy || !state.parking;
     $("parking-status").textContent = state.parking ?
       `待机位 (°)：${state.parking.positions_rad.map(x => (x * 180 / Math.PI).toFixed(2)).join(", ")}` : "尚未保存待机位。";
@@ -218,7 +219,7 @@ async function refreshState() {
       `TCP (mm)：${measurement.tcp_offset_mm.map(x => x.toFixed(3)).join(", ")}；最大残差 ${measurement.max_error_mm.toFixed(3)} mm` : "尚未计算有效 TCP。";
     if (state.calibration.paper) {
       const p = state.calibration.paper.paper;
-      $("paper-result").textContent = `可画范围 ${p.width_mm.toFixed(1)} × ${p.height_mm.toFixed(1)} mm；A5 ${p.drawing_area.width_mm} × ${p.drawing_area.height_mm} mm。`;
+      $("paper-result").textContent = `已在实测范围内选取 A5 ${p.drawing_area.width_mm} × ${p.drawing_area.height_mm} mm。`;
     } else {
       $("paper-result").textContent = "尚未定位纸面。";
     }

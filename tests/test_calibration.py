@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock
 
+import cv2
 import numpy as np
 import pytest
 import yaml
@@ -40,13 +41,15 @@ def observations(config, samples):
     return {"robot": calibration.robot_identity(config), "samples": samples}
 
 
-def paper_samples(offset, width=190, height=277, skew=0):
+def paper_samples(offset, width=190, height=277, skew=0, *, corners=None):
     frame = Rotation.from_euler("xyz", [12, -8, 25], degrees=True)
     origin = np.array([250, -120, 15])
     rotations = frame * Rotation.from_euler("xyz", [
-        [180, 0, 0], [170, 10, 0], [190, -15, 10]
+        [180, 0, 0], [170, 10, 0], [190, -15, 10], [175, 5, -10]
     ], degrees=True)
-    points = origin + frame.apply([[0, 0, 0], [width, 0, 0], [skew, height, 0]])
+    if corners is None:
+        corners = [[0, 0, 0], [width, 0, 0], [width + skew, height, 0], [skew, height, 0]]
+    points = origin + frame.apply(corners)
     samples = [
         {"position_mm": (point - rotation.apply(offset)).tolist(),
          "quaternion_xyzw": rotation.as_quat().tolist()}
@@ -102,7 +105,8 @@ def test_tilted_paper_uses_tcp_and_each_samples_orientation():
     assert paper["height_mm"] == pytest.approx(277)
     np.testing.assert_allclose(paper["drawing_area"]["origin_mm"], [21, 33.5])
     np.testing.assert_allclose(result["normal"], rotation.apply([0, 0, 1]))
-    np.testing.assert_allclose(result["fourth_corner_mm"], points[1] + points[2] - points[0])
+    np.testing.assert_allclose(result["measured_corners_mm"], points)
+    assert result["plane_max_error_mm"] < 1e-10
     recovered = rotation * Rotation.from_quat(result["quaternion_in_paper"])
     expected = Rotation.from_quat(samples[0]["quaternion_xyzw"])
     assert (recovered.inv() * expected).magnitude() < 1e-12
@@ -125,14 +129,107 @@ def test_exact_a5_fit_is_not_rejected_by_rotation_roundoff():
     np.testing.assert_allclose(result["paper"]["drawing_area"]["origin_mm"], [0, 0], atol=1e-10)
 
 
-def test_paper_rejects_wrong_order_skew_and_collinearity():
+def test_paper_rejects_wrong_order_and_collinearity():
     samples, _, _ = paper_samples([0, 0, 170])
     with pytest.raises(ValueError, match="法向"):
-        calibration.locate_paper([samples[0], samples[2], samples[1]], [0, 0, 170])
+        calibration.locate_paper([samples[0], samples[3], samples[2], samples[1]], [0, 0, 170])
     with pytest.raises(ValueError, match="共线"):
-        calibration.locate_paper([samples[0], samples[1], samples[1]], [0, 0, 170])
-    samples, _, _ = paper_samples([0, 0, 170], skew=30)
-    with pytest.raises(ValueError, match="直角"):
+        calibration.locate_paper([samples[0], samples[1], samples[1], samples[3]], [0, 0, 170])
+    with pytest.raises(ValueError, match="交叉"):
+        calibration.locate_paper([samples[0], samples[2], samples[1], samples[3]], [0, 0, 170])
+
+
+def assert_a5_inside_measured_boundary(result):
+    paper = result["paper"]
+    area = paper["drawing_area"]
+    origin = np.array(area["origin_mm"])
+    size = np.array([area["width_mm"], area["height_mm"]])
+    assert sorted(size) == [148, 210]
+    polygon = np.array(result["corners_in_paper_mm"], dtype=np.float32)
+    # 独立用 OpenCV 检查整个选区网格，包含四条边，而非只核对包围盒或四角。
+    for x in np.linspace(0, size[0], 21):
+        for y in np.linspace(0, size[1], 21):
+            assert cv2.pointPolygonTest(polygon, tuple(origin + [x, y]), True) >= -1e-4
+
+
+@pytest.mark.parametrize("corners", [
+    [[0, 0, 0], [240, 0, 0], [300, 300, 0], [60, 300, 0]],
+    [[0, 0, 0], [250, 0, 0], [170, 280, 0], [20, 280, 0]],
+    [[0, 0, 0], [500, 0, 0], [180, 200, 0], [0, 500, 0]],
+    [[0, 0, 0], [1000, 200, 0], [0, 400, 0], [100, 200, 0]],
+    [[0, 0, 0], [240, 0, 0], [180, 300, 0], [-40, 300, 0]],
+])
+def test_a5_is_contained_in_irregular_quadrilateral(corners):
+    samples, _, _ = paper_samples([12, -8, 170], corners=corners)
+    result = calibration.locate_paper(samples, [12, -8, 170])
+    assert_a5_inside_measured_boundary(result)
+
+
+def test_a5_moves_away_from_bbox_center_to_fit_trapezoid():
+    samples, _, _ = paper_samples([0, 0, 170], corners=[
+        [0, 0, 0], [250, 0, 0], [170, 280, 0], [20, 280, 0],
+    ])
+    result = calibration.locate_paper(samples, [0, 0, 170])
+    assert result["orientation"] == "portrait"
+    assert not np.allclose(result["paper"]["drawing_area"]["origin_mm"], [51, 35])
+    assert_a5_inside_measured_boundary(result)
+
+
+def test_auto_checks_actual_polygon_for_each_orientation():
+    samples, _, _ = paper_samples([0, 0, 170], corners=[
+        [0, 0, 0], [400, 0, 0], [256.25, 230, 0], [143.75, 230, 0],
+    ])
+    result = calibration.locate_paper(samples, [0, 0, 170])
+    assert result["orientation"] == "landscape"
+    assert_a5_inside_measured_boundary(result)
+    with pytest.raises(ValueError, match="放不下"):
+        calibration.locate_paper(samples, [0, 0, 170], orientation="portrait")
+
+
+def test_large_bbox_does_not_imply_a5_fits_polygon():
+    samples, _, _ = paper_samples([0, 0, 170], width=240, height=300, skew=180)
+    with pytest.raises(ValueError, match="四边形内放不下"):
+        calibration.locate_paper(samples, [0, 0, 170])
+
+
+def test_shifted_paper_frame_preserves_world_coordinates(config, tcp_samples):
+    tcp = calibration.calibrate_tcp(config, observations(config, tcp_samples))
+    samples, points, rotation = paper_samples([12, -8, 170], corners=[
+        [0, 0, 0], [240, 0, 0], [180, 300, 0], [-40, 300, 0],
+    ])
+    located = calibration.calibrate_paper(tcp, observations(config, samples))
+    paper = located["paper"]
+    frame = PaperFrame.from_points(paper["origin_mm"], paper["x_point_mm"], paper["y_point_mm"])
+    for xy, expected in zip(located["calibration"]["paper"]["corners_in_paper_mm"], points):
+        np.testing.assert_allclose(frame.point(xy) * 1000, expected, atol=1e-9)
+    np.testing.assert_allclose(frame.rotation, rotation.as_matrix(), atol=1e-12)
+    np.testing.assert_allclose(frame.origin * 1000, points[0] + rotation.apply([-40, 0, 0]))
+    area = paper["drawing_area"]
+    start = np.array(area["origin_mm"]) + paper["margin_mm"]
+    end = np.array(area["origin_mm"]) + [area["width_mm"], area["height_mm"]]
+    end -= paper["margin_mm"]
+    job = make_job([Stroke(np.array([start, end]))], located)
+    pose = job["segments"][2]["poses"][0]
+    tool_rotation = Rotation.from_quat(pose[3:])
+    np.testing.assert_allclose(tool_rotation.as_matrix(),
+                               Rotation.from_quat(samples[0]["quaternion_xyzw"]).as_matrix())
+    tip = np.array(pose[:3]) * 1000 + tool_rotation.apply([12, -8, 170])
+    np.testing.assert_allclose(tip, points[0] + rotation.apply([*(end - [40, 0]), 0]), atol=1e-9)
+
+
+def test_four_points_fit_plane_and_reject_excessive_nonplanarity():
+    samples, _, _ = paper_samples([0, 0, 170], corners=[
+        [0, 0, 0.2], [190, 0, -0.2], [190, 277, 0.2], [0, 277, -0.2],
+    ])
+    result = calibration.locate_paper(samples, [0, 0, 170])
+    assert result["plane_max_error_mm"] == pytest.approx(0.2)
+    assert_a5_inside_measured_boundary(result)
+    with pytest.raises(ValueError, match="平面残差"):
+        calibration.locate_paper(samples, [0, 0, 170], max_plane_error_mm=0.1)
+    samples, _, _ = paper_samples([0, 0, 170], corners=[
+        [0, 0, 4], [190, 0, -4], [190, 277, 4], [0, 277, -4],
+    ])
+    with pytest.raises(ValueError, match="平面残差"):
         calibration.locate_paper(samples, [0, 0, 170])
 
 
@@ -261,7 +358,7 @@ def test_cli_capture_solve_and_failed_solve_preserves_file(config, tcp_samples, 
     with pytest.raises(SystemExit) as error:
         cli.main(["calibrate", "paper", "--config", str(output), "--samples", str(samples),
                   "--output", str(final)])
-    assert error.value.code == 1 and "恰好 3" in capsys.readouterr().err
+    assert error.value.code == 1 and "恰好 4" in capsys.readouterr().err
     assert final.read_text() == saved
 
 

@@ -15,6 +15,7 @@ Web 默认监听宿主 `127.0.0.1:8080`。通过 SSH 访问时，用 `ssh -N -L 
 本机已有镜像时可以直接启动。联网的目标机可从同一份源码构建：
 
 ```bash
+python3 scripts/fetch_vendor.py
 sudo docker compose build web      # piperdraw/ros:humble
 bash scripts/build_hardware.sh    # piperdraw/hardware:0.1，可选
 ```

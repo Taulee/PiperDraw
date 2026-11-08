@@ -16,7 +16,7 @@ def add_calibration_commands(commands):
     for name, description in (
         ("capture", "手动定位并保持静止后，追加一次实际法兰位姿"),
         ("tcp", "由同一点的多个姿态求 TCP，撤销旧纸面标定"),
-        ("paper", "由原点、X 角、Y 角定位纸面，居中放入 A5"),
+        ("paper", "由左下、右下、右上、左上四点定位纸面，在四边形内选取 A5"),
     ):
         action = actions.add_parser(name, help=description, description=description)
         action.add_argument("--config", type=Path, default=Path("config/real.yaml"))
@@ -33,7 +33,8 @@ def add_calibration_commands(commands):
         elif name == "paper":
             action.add_argument("--orientation", choices=["auto", "portrait", "landscape"],
                                 default="auto")
-            action.add_argument("--max-skew-deg", type=float, default=2.0)
+            action.add_argument("--max-plane-error-mm", type=float, default=1.0,
+                                help="四角拟合平面的最大残差，单位 mm")
             action.add_argument("--confirm-motion", action="store_true", help=argparse.SUPPRESS)
 
 
@@ -81,7 +82,7 @@ def calibration_command(args):
         else:
             updated = calibrate_paper(
                 config, observations, orientation=args.orientation,
-                max_skew_deg=args.max_skew_deg,
+                max_plane_error_mm=args.max_plane_error_mm,
             )
         _save_yaml(args.output, updated)
         result = {"config": str(args.output), "calibrated": updated["calibrated"],

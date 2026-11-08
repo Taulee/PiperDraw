@@ -289,8 +289,8 @@ class WebApp:
                         raise ValueError("采点来源不可用")
                     if kind == "paper" and samples.exists() and len(
                         yaml.safe_load(samples.read_text())["samples"]
-                    ) >= 3:
-                        raise ValueError("纸面已采集三个点；请撤销末点或清空后再采集")
+                    ) >= 4:
+                        raise ValueError("纸面已采集四个点；请撤销末点或清空后再采集")
                     arguments += ["--source", source, "--device-config", self.device_config]
                     self.invalidate_calibration(kind)
                 else:

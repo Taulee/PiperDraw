@@ -3,13 +3,14 @@
 import xml.etree.ElementTree as ET
 from copy import deepcopy
 from datetime import datetime, timezone
+from itertools import combinations
 from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .geometry import PaperFrame, drawing_bounds
+from .geometry import drawing_bounds
 
 
 def robot_identity(config):
@@ -147,45 +148,144 @@ def solve_tcp(samples, *, max_error_mm=1.0):
     }
 
 
-def locate_paper(samples, tcp_offset_mm, *, orientation="auto", max_skew_deg=2.0):
-    """按原点、X 角、Y 角定位矩形；A5 优先竖向，放不下时检查横向。"""
-    if len(samples) != 3:
-        raise ValueError("纸面定位需要恰好 3 个样本，顺序为原点、X 角、Y 角")
-    if not np.isfinite(max_skew_deg) or not 0 < max_skew_deg < 45:
-        raise ValueError("矩形角度误差阈值必须在 (0, 45) 度内")
+def _rectangle_inside_polygon(origin, size, polygon):
+    """中心在多边形内，且边界不进入矩形内部时，整个矩形都在多边形内。"""
+    tolerance = 1e-8
+    center = origin + size / 2
+    inside = False
+    for start, end in zip(polygon, np.roll(polygon, -1, axis=0)):
+        if (start[1] > center[1]) != (end[1] > center[1]):
+            crossing = start[0] + (center[1] - start[1]) * (
+                end[0] - start[0]
+            ) / (end[1] - start[1])
+            if center[0] < crossing:
+                inside = not inside
+        # 裁剪每条边与矩形开集的交集；边界相切允许，穿过内部则拒绝。
+        first, last = 0.0, 1.0
+        for position, delta, lower, upper in zip(start, end - start, origin, origin + size):
+            if abs(delta) < 1e-12:
+                if position <= lower + tolerance or position >= upper - tolerance:
+                    break
+            else:
+                limits = sorted(((lower + tolerance - position) / delta,
+                                 (upper - tolerance - position) / delta))
+                first, last = max(first, limits[0]), min(last, limits[1])
+            if first >= last:
+                break
+        else:
+            return False
+    return inside
+
+
+def _inscribed_rectangle(polygon, size):
+    """寻找最靠近范围中心的固定尺寸矩形，也适用于凹四边形。
+
+    可行选区的边界来自矩形角接触多边形边，或多边形角接触矩形边。
+    最近解必为目标中心、这些直线上的投影或直线交点；逐个检查实际包含关系。
+    """
+    lower, upper = polygon.min(axis=0), polygon.max(axis=0) - size
+    if np.any(lower > upper + 1e-8):
+        return None
+    target = (lower + upper) / 2
+    corners = np.array([[0, 0], [size[0], 0], size, [0, size[1]]])
+    lines = []
+    for start, end in zip(polygon, np.roll(polygon, -1, axis=0)):
+        edge = end - start
+        normal = np.array([edge[1], -edge[0]]) / np.linalg.norm(edge)
+        lines.extend((normal, float(normal @ (start - corner))) for corner in corners)
+        lines.extend((normal, float(normal @ start - shift)) for normal, shift in (
+            (np.array([1.0, 0.0]), 0), (np.array([1.0, 0.0]), size[0]),
+            (np.array([0.0, 1.0]), 0), (np.array([0.0, 1.0]), size[1]),
+        ))
+    candidates = [target]
+    candidates.extend(target + (offset - normal @ target) * normal for normal, offset in lines)
+    for (first, a), (second, b) in combinations(lines, 2):
+        matrix = np.array([first, second])
+        if abs(np.linalg.det(matrix)) > 1e-12:
+            candidates.append(np.linalg.solve(matrix, [a, b]))
+    for origin in sorted(candidates, key=lambda point: np.linalg.norm(point - target)):
+        if np.all(origin >= lower - 1e-8) and np.all(origin <= upper + 1e-8):
+            origin = np.clip(origin, lower, np.maximum(upper, lower))
+            if _rectangle_inside_polygon(origin, size, polygon):
+                return origin
+    return None
+
+
+def locate_paper(samples, tcp_offset_mm, *, orientation="auto", max_plane_error_mm=1.0):
+    """用四个环绕角点拟合纸面，在四边形内截取横向或纵向 A5。"""
+    if len(samples) != 4:
+        raise ValueError("纸面定位需要恰好 4 个样本，顺序为左下、右下、右上、左上")
+    if not np.isfinite(max_plane_error_mm) or max_plane_error_mm <= 0:
+        raise ValueError("纸面最大平面误差必须为有限正数")
     offset = np.asarray(tcp_offset_mm, dtype=float)
     if offset.shape != (3,) or not np.isfinite(offset).all():
         raise ValueError("TCP 偏移必须是三个有限数，单位 mm")
     positions, rotations = _poses(samples)
     points = positions + np.einsum("nij,j->ni", rotations, offset)
-    frame = PaperFrame.from_points(*points)
-    x, y = points[1:] - points[0]
-    cosine = np.dot(x, y) / (np.linalg.norm(x) * np.linalg.norm(y))
-    skew = abs(90 - np.degrees(np.arccos(np.clip(cosine, -1, 1))))
-    if skew > max_skew_deg:
-        raise ValueError(f"纸面两边偏离直角 {skew:.3f}°，超过 {max_skew_deg:g}°")
-    if np.any((positions - points) @ frame.rotation[:, 2] <= 0):
-        raise ValueError("纸面法向朝向错误；从纸面上方看，按左下、右下、左上顺序采点")
-    size = np.array([np.linalg.norm(x), np.dot(y, frame.rotation[:, 1])])
+    center = points.mean(axis=0)
+    centered = points - center
+    _, singular, axes = np.linalg.svd(centered)
+    area = np.cross(centered, np.roll(centered, -1, axis=0)).sum(axis=0)
+    if singular[1] < 1 or np.linalg.norm(area) < 1:
+        raise ValueError("纸面角点重合、共线或边界交叉")
+    normal = axes[-1]
+    if normal @ area < 0:
+        normal = -normal
+    errors = np.abs(centered @ normal)
+    if errors.max() > max_plane_error_mm:
+        raise ValueError(
+            f"纸面最大平面残差 {errors.max():.3f} mm 超过 {max_plane_error_mm:g} mm；"
+            "请检查纸张是否平整并重新采点"
+        )
+    x = points[1] - points[0]
+    x -= (x @ normal) * normal
+    if np.linalg.norm(x) < 1:
+        raise ValueError("纸面角点重合或共线")
+    x /= np.linalg.norm(x)
+    rotation = np.column_stack((x, np.cross(normal, x), normal))
+    polygon = (centered @ rotation)[:, :2]
+    edges = np.roll(polygon, -1, axis=0) - polygon
+    turns = np.cross(edges, np.roll(edges, -1, axis=0))
+    if any(np.linalg.norm(a - b) < 1 for a, b in combinations(polygon, 2)) or np.any(
+        np.abs(turns) < 1
+    ):
+        raise ValueError("纸面角点重合或共线")
+    for i, j in ((0, 2), (1, 3)):
+        a, b = polygon[i], polygon[(i + 1) % 4]
+        c, d = polygon[j], polygon[(j + 1) % 4]
+        if np.cross(b - a, c - a) * np.cross(b - a, d - a) < 0 and (
+            np.cross(d - c, a - c) * np.cross(d - c, b - c) < 0
+        ):
+            raise ValueError("纸面四边形边界交叉；请按左下、右下、右上、左上顺序采点")
+    if np.any((positions - points) @ normal <= 0):
+        raise ValueError("纸面法向朝向错误；从纸面上方看，按左下、右下、右上、左上顺序采点")
+    lower = polygon.min(axis=0)
+    size = polygon.max(axis=0) - lower
+    polygon -= lower
+    origin = center + rotation[:, :2] @ lower
     choices = {"portrait": [148.0, 210.0], "landscape": [210.0, 148.0]}
     if orientation not in (*choices, "auto"):
         raise ValueError("A5 方向必须为 auto、portrait 或 landscape")
     candidates = choices.items() if orientation == "auto" else [(orientation, choices[orientation])]
-    selected = next(
-        ((name, np.array(s)) for name, s in candidates if np.all(size + 1e-8 >= s)), None
-    )
+    selected = None
+    for name, dimensions in candidates:
+        drawing_size = np.array(dimensions)
+        drawing_origin = _inscribed_rectangle(polygon, drawing_size)
+        if drawing_origin is not None:
+            selected = name, drawing_size, drawing_origin
+            break
     if selected is None:
-        raise ValueError(f"可画范围 {size[0]:.2f} × {size[1]:.2f} mm 放不下指定方向的 A5")
-    orientation, drawing_size = selected
-    # 小测量误差以 O-X 为基准正交化，保留原始角点供检查。
+        raise ValueError("采集的四边形内放不下指定方向的完整 A5，请扩大可画范围或调整方向")
+    orientation, drawing_size, drawing_origin = selected
+    # 现有预览和碰撞场景使用包围矩形，绘画选区严格限制在实测四边形内。
     paper = {
-        "origin_mm": points[0].tolist(),
-        "x_point_mm": points[1].tolist(),
-        "y_point_mm": (points[0] + size[1] * frame.rotation[:, 1]).tolist(),
+        "origin_mm": origin.tolist(),
+        "x_point_mm": (origin + size[0] * rotation[:, 0]).tolist(),
+        "y_point_mm": (origin + size[1] * rotation[:, 1]).tolist(),
         "width_mm": float(size[0]),
         "height_mm": float(size[1]),
         "drawing_area": {
-            "origin_mm": np.maximum((size - drawing_size) / 2, 0).tolist(),
+            "origin_mm": drawing_origin.tolist(),
             "width_mm": float(drawing_size[0]),
             "height_mm": float(drawing_size[1]),
         },
@@ -193,12 +293,13 @@ def locate_paper(samples, tcp_offset_mm, *, orientation="auto", max_skew_deg=2.0
     return {
         "paper": paper,
         "measured_corners_mm": points.tolist(),
-        "fourth_corner_mm": (points[1] + size[1] * frame.rotation[:, 1]).tolist(),
-        "normal": frame.rotation[:, 2].tolist(),
-        "skew_deg": float(skew),
+        "corners_in_paper_mm": polygon.tolist(),
+        "normal": normal.tolist(),
+        "plane_rms_error_mm": float(np.sqrt(np.mean(errors**2))),
+        "plane_max_error_mm": float(errors.max()),
         "orientation": orientation,
         "quaternion_in_paper": Rotation.from_matrix(
-            frame.rotation.T @ rotations[0]
+            rotation.T @ rotations[0]
         ).as_quat().tolist(),
     }
 
@@ -219,7 +320,7 @@ def calibrate_tcp(config, observations, *, max_error_mm=1.0):
     return updated
 
 
-def calibrate_paper(config, observations, *, orientation="auto", max_skew_deg=2.0):
+def calibrate_paper(config, observations, *, orientation="auto", max_plane_error_mm=1.0):
     """返回已标定的纸面、A5 选区及实测笔姿。"""
     identity = robot_identity(config)
     calibration = config.get("calibration", {})
@@ -230,7 +331,7 @@ def calibrate_paper(config, observations, *, orientation="auto", max_skew_deg=2.
     if config["tool"]["tcp_offset_mm"] != calibration["tcp"]["tcp_offset_mm"]:
         raise ValueError("TCP 已被修改，请重新标定")
     result = locate_paper(observations["samples"], config["tool"]["tcp_offset_mm"],
-                          orientation=orientation, max_skew_deg=max_skew_deg)
+                          orientation=orientation, max_plane_error_mm=max_plane_error_mm)
     updated = deepcopy(config)
     updated["paper"].update(deepcopy(result["paper"]))
     drawing_bounds(updated["paper"])
